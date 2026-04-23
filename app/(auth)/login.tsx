@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { signInWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '@/lib/firebase/config';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '@/lib/googleAuth';
+
+WebBrowser.maybeCompleteAuthSession();
 
 function getErrorMessage(code?: string): string {
   switch (code) {
@@ -30,8 +35,32 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+  });
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { id_token } = response.params;
+      setGoogleLoading(true);
+      const credential = GoogleAuthProvider.credential(id_token);
+      signInWithCredential(auth, credential)
+        .then(() => router.replace('/(app)'))
+        .catch(err => {
+          setError('Não foi possível entrar com Google. Tente novamente.');
+          console.error(err);
+        })
+        .finally(() => setGoogleLoading(false));
+    } else if (response?.type === 'error') {
+      setError('Não foi possível entrar com Google. Tente novamente.');
+    }
+  }, [response]);
 
   const handleLogin = async () => {
     if (!email.trim() || !password) { setError('Preencha e-mail e senha.'); return; }
@@ -62,6 +91,11 @@ export default function LoginScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    await promptAsync();
   };
 
   return (
@@ -143,7 +177,29 @@ export default function LoginScreen() {
               }
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => { setShowReset(true); setError(''); }} style={{ marginBottom: 20 }}>
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>ou</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.googleBtn}
+              onPress={handleGoogleLogin}
+              disabled={!request || googleLoading}
+            >
+              {googleLoading
+                ? <ActivityIndicator color="#1A1714" />
+                : (
+                  <>
+                    <Text style={styles.googleIcon}>G</Text>
+                    <Text style={styles.googleBtnText}>Continuar com Google</Text>
+                  </>
+                )
+              }
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => { setShowReset(true); setError(''); }} style={{ marginBottom: 20, marginTop: 8 }}>
               <Text style={styles.link}>Esqueci minha senha</Text>
             </TouchableOpacity>
 
@@ -196,5 +252,15 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#E4E0DB' },
+  dividerText: { fontSize: 13, color: '#9E9894' },
+  googleBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E4E0DB',
+    borderRadius: 12, padding: 14, marginBottom: 20,
+  },
+  googleIcon: { fontSize: 16, fontWeight: '700', color: '#4285F4' },
+  googleBtnText: { fontSize: 15, fontWeight: '500', color: '#1A1714' },
   link: { textAlign: 'center', color: '#6B6460', fontSize: 14 },
 });

@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '@/lib/firebase/config';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
+import { GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID } from '@/lib/googleAuth';
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function CadastroScreen() {
   const router = useRouter();
@@ -14,6 +19,30 @@ export default function CadastroScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+  });
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { id_token } = response.params;
+      setGoogleLoading(true);
+      const credential = GoogleAuthProvider.credential(id_token);
+      signInWithCredential(auth, credential)
+        .then(() => router.replace('/(app)'))
+        .catch(err => {
+          setError('Não foi possível entrar com Google. Tente novamente.');
+          console.error(err);
+        })
+        .finally(() => setGoogleLoading(false));
+    } else if (response?.type === 'error') {
+      setError('Não foi possível entrar com Google. Tente novamente.');
+    }
+  }, [response]);
 
   const handleCadastro = async () => {
     setError('');
@@ -37,6 +66,11 @@ export default function CadastroScreen() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setError('');
+    await promptAsync();
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -47,6 +81,28 @@ export default function CadastroScreen() {
         <Text style={styles.sub}>Crie sua conta gratuita.</Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <TouchableOpacity
+          style={styles.googleBtn}
+          onPress={handleGoogleLogin}
+          disabled={!request || googleLoading}
+        >
+          {googleLoading
+            ? <ActivityIndicator color="#1A1714" />
+            : (
+              <>
+                <Text style={styles.googleIcon}>G</Text>
+                <Text style={styles.googleBtnText}>Continuar com Google</Text>
+              </>
+            )
+          }
+        </TouchableOpacity>
+
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>ou crie com e-mail</Text>
+          <View style={styles.dividerLine} />
+        </View>
 
         <TextInput
           style={styles.input}
@@ -94,11 +150,21 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F2F0EC' },
   inner: { flexGrow: 1, justifyContent: 'center', padding: 28 },
   logo: { fontSize: 32, fontWeight: '700', color: '#1A1714', marginBottom: 6, letterSpacing: -0.5 },
-  sub: { fontSize: 15, color: '#6B6460', marginBottom: 36 },
+  sub: { fontSize: 15, color: '#6B6460', marginBottom: 28 },
   error: {
     backgroundColor: '#FEE2E2', color: '#991B1B',
     padding: 12, borderRadius: 10, marginBottom: 16, fontSize: 13.5,
   },
+  googleBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E4E0DB',
+    borderRadius: 12, padding: 14, marginBottom: 20,
+  },
+  googleIcon: { fontSize: 16, fontWeight: '700', color: '#4285F4' },
+  googleBtnText: { fontSize: 15, fontWeight: '500', color: '#1A1714' },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#E4E0DB' },
+  dividerText: { fontSize: 13, color: '#9E9894' },
   input: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
