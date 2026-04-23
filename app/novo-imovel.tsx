@@ -29,6 +29,7 @@ export default function NovoImovelScreen() {
   const [budget, setBudget] = useState('');
   const [address, setAddress] = useState('');
   const [description, setDescription] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
   const [showTypePicker, setShowTypePicker] = useState(false);
 
   // Step 2
@@ -77,7 +78,7 @@ export default function NovoImovelScreen() {
         roomCount: totalRooms,
         description,
         address,
-        isPublic: false,
+        isPublic,
         publicSlug: null,
         coverImage: null,
         totalBudget: parseFloat(budget) || 0,
@@ -208,6 +209,16 @@ export default function NovoImovelScreen() {
             placeholderTextColor="#9E9894"
             multiline
           />
+
+          <TouchableOpacity style={s.publicRow} onPress={() => setIsPublic(v => !v)} activeOpacity={0.7}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.publicLabel}>Projeto público</Text>
+              <Text style={s.publicHint}>Qualquer pessoa com o link pode ver seus itens</Text>
+            </View>
+            <View style={[s.toggle, isPublic && s.toggleOn]}>
+              <View style={[s.toggleThumb, isPublic && s.toggleThumbOn]} />
+            </View>
+          </TouchableOpacity>
 
           <TouchableOpacity style={s.btn} onPress={handleNext}>
             <Text style={s.btnText}>Próximo: escolher cômodos →</Text>
@@ -372,4 +383,15 @@ const s = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center',
   },
   addCustomText: { fontSize: 14, fontWeight: '500', color: '#1A1714' },
+  publicRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16,
+    backgroundColor: '#F7F5F2', borderWidth: 1.5, borderColor: '#E4E0DB',
+    borderRadius: 12, padding: 14,
+  },
+  publicLabel: { fontSize: 14, fontWeight: '600', color: '#1A1714', marginBottom: 2 },
+  publicHint: { fontSize: 12, color: '#9E9894' },
+  toggle: { width: 40, height: 22, borderRadius: 11, backgroundColor: '#D1CBC5', position: 'relative', flexShrink: 0 },
+  toggleOn: { backgroundColor: '#B5602A' },
+  toggleThumb: { position: 'absolute', top: 3, left: 3, width: 16, height: 16, borderRadius: 8, backgroundColor: '#fff' },
+  toggleThumbOn: { left: 21 },
 });

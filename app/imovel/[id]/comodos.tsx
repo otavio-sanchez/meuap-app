@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Modal, TextInput,
+  ActivityIndicator, Alert, Modal, TextInput, Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -10,7 +10,7 @@ import {
   createRoom, deleteRoom, createItem, updateItem, deleteItem,
 } from '@/lib/firebase/firestore';
 import {
-  Property, FirestoreRoom, FirestoreItem,
+  Property, FirestoreRoom, FirestoreItem, PriceLink,
   STATUS_CONFIG, STATUS_ORDER, PRIORITY_CONFIG, CATEGORIES, ROOM_TYPES, ItemStatus,
 } from '@/lib/types';
 
@@ -263,6 +263,12 @@ function ItemRow({ item, onEdit, onDelete, onStatusChange }: {
         <Text style={ir.meta} numberOfLines={1}>
           {CATEGORIES[item.category].label}{item.store ? ` · ${item.store}` : ''}
         </Text>
+        {item.notes ? <Text style={ir.notes} numberOfLines={1}>{item.notes}</Text> : null}
+        {item.productUrl ? (
+          <TouchableOpacity onPress={() => Linking.openURL(item.productUrl!).catch(() => {})}>
+            <Text style={ir.link}>🔗 Ver produto</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       <View style={{ alignItems: 'flex-end', gap: 4 }}>
         <View style={[ir.statusBadge, { backgroundColor: status.bg }]}>
@@ -300,7 +306,25 @@ function ItemFormModal({ room, rooms, propertyId, userId, item, onSave, onDelete
   const [store, setStore] = useState(item?.store ?? '');
   const [notes, setNotes] = useState(item?.notes ?? '');
   const [quantity, setQuantity] = useState(String(item?.quantity ?? 1));
+  const [productUrl, setProductUrl] = useState(item?.productUrl ?? '');
+  const [priceLinks, setPriceLinks] = useState<PriceLink[]>(item?.priceLinks ?? []);
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [newLinkPrice, setNewLinkPrice] = useState('');
+  const [newLinkLabel, setNewLinkLabel] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const addPriceLink = () => {
+    const price = parseFloat(newLinkPrice.replace(',', '.'));
+    if (!newLinkUrl.trim() || isNaN(price)) return;
+    const label = newLinkLabel.trim() || (() => {
+      try { return new URL(newLinkUrl.startsWith('http') ? newLinkUrl : `https://${newLinkUrl}`).hostname.replace(/^www\./, ''); }
+      catch { return newLinkUrl; }
+    })();
+    setPriceLinks(prev => [...prev, { url: newLinkUrl.trim(), price, label }]);
+    const avg = [...priceLinks, { url: newLinkUrl.trim(), price, label }].reduce((s, l) => s + l.price, 0) / (priceLinks.length + 1);
+    setEstimatedPrice(String(Math.round(avg)));
+    setNewLinkUrl(''); setNewLinkPrice(''); setNewLinkLabel('');
+  };
 
   const handleSave = async () => {
     if (!name.trim()) { Alert.alert('Atenção', 'O nome é obrigatório.'); return; }
@@ -316,8 +340,8 @@ function ItemFormModal({ room, rooms, propertyId, userId, item, onSave, onDelete
       paidPrice: paidPrice ? parseFloat(paidPrice) : null,
       quantity: parseInt(quantity) || 1,
       store: store.trim() || null,
-      productUrl: item?.productUrl ?? null,
-      priceLinks: item?.priceLinks ?? [],
+      productUrl: productUrl.trim() || null,
+      priceLinks,
       images: item?.images ?? [],
       notes: notes.trim(),
     });
@@ -421,6 +445,53 @@ function ItemFormModal({ room, rooms, propertyId, userId, item, onSave, onDelete
               placeholderTextColor="#9E9894" multiline
             />
 
+            <Text style={s.label}>URL do produto</Text>
+            <TextInput
+              style={s.input} value={productUrl} onChangeText={setProductUrl}
+              placeholder="https://..." placeholderTextColor="#9E9894"
+              autoCapitalize="none" keyboardType="url"
+            />
+
+            <Text style={s.label}>Links de preço</Text>
+            {priceLinks.map((l, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <View style={{ flex: 1, backgroundColor: '#F7F5F2', borderRadius: 8, padding: 8, borderWidth: 1, borderColor: '#E4E0DB' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#1A1714' }}>{l.label}</Text>
+                  <Text style={{ fontSize: 11, color: '#9E9894' }} numberOfLines={1}>{l.url}</Text>
+                  <Text style={{ fontSize: 12, color: '#5B8A72', fontWeight: '600', marginTop: 2 }}>
+                    {l.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setPriceLinks(prev => prev.filter((_, idx) => idx !== i))}>
+                  <Text style={{ color: '#DC2626', fontSize: 18 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            <View style={{ backgroundColor: '#F7F5F2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E4E0DB', marginBottom: 4 }}>
+              <Text style={{ fontSize: 11, color: '#9E9894', marginBottom: 8, fontWeight: '600' }}>ADICIONAR LINK</Text>
+              <TextInput
+                style={[s.input, { marginBottom: 6 }]} value={newLinkUrl} onChangeText={setNewLinkUrl}
+                placeholder="URL da loja" placeholderTextColor="#9E9894"
+                autoCapitalize="none" keyboardType="url"
+              />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkLabel} onChangeText={setNewLinkLabel}
+                  placeholder="Loja (opcional)" placeholderTextColor="#9E9894"
+                />
+                <TextInput
+                  style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkPrice} onChangeText={setNewLinkPrice}
+                  placeholder="Preço" placeholderTextColor="#9E9894" keyboardType="numeric"
+                />
+              </View>
+              <TouchableOpacity
+                style={[s.btn, { marginTop: 8, paddingVertical: 10, backgroundColor: newLinkUrl.trim() && newLinkPrice ? '#B5602A' : '#E4E0DB' }]}
+                onPress={addPriceLink} disabled={!newLinkUrl.trim() || !newLinkPrice}
+              >
+                <Text style={[s.btnText, { fontSize: 13 }]}>+ Adicionar link</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
               <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: '#F0EDE9' }]} onPress={onClose}>
                 <Text style={[s.btnText, { color: '#1A1714' }]}>Cancelar</Text>
@@ -509,6 +580,8 @@ const ir = StyleSheet.create({
   checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, justifyContent: 'center', alignItems: 'center', marginTop: 2, flexShrink: 0 },
   name: { fontSize: 14, fontWeight: '500', color: '#1A1714' },
   meta: { fontSize: 11, color: '#9E9894', marginTop: 2 },
+  notes: { fontSize: 11, color: '#6B6460', marginTop: 2, fontStyle: 'italic' },
+  link: { fontSize: 11, color: '#B5602A', marginTop: 3, textDecorationLine: 'underline' },
   statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
   statusText: { fontSize: 11, fontWeight: '500' },
   price: { fontSize: 13, fontWeight: '700', color: '#1A1714' },
