@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Modal, TextInput, Linking,
+  ActivityIndicator, Alert, Modal, TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -10,9 +10,11 @@ import {
   createRoom, deleteRoom, createItem, updateItem, deleteItem,
 } from '@/lib/firebase/firestore';
 import {
-  Property, FirestoreRoom, FirestoreItem, PriceLink,
-  STATUS_CONFIG, STATUS_ORDER, PRIORITY_CONFIG, CATEGORIES, ROOM_TYPES, ItemStatus,
+  Property, FirestoreRoom, FirestoreItem,
+  STATUS_CONFIG, ROOM_TYPES, ItemStatus,
 } from '@/lib/types';
+import { ItemRow } from '@/components/ItemRow';
+import { ItemFormModal } from '@/components/ItemFormModal';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 });
@@ -211,7 +213,7 @@ export default function ComodosScreen() {
       {/* Add Item Modal */}
       {addingItemRoom && user && (
         <ItemFormModal
-          room={addingItemRoom}
+          defaultRoomId={addingItemRoom.id}
           rooms={rooms}
           propertyId={id}
           userId={user.uid}
@@ -223,7 +225,7 @@ export default function ComodosScreen() {
       {/* Edit Item Modal */}
       {editingItem && user && (
         <ItemFormModal
-          room={rooms.find(r => r.id === editingItem.roomId) ?? rooms[0]}
+          defaultRoomId={editingItem.roomId}
           rooms={rooms}
           propertyId={id}
           userId={user.uid}
@@ -234,286 +236,6 @@ export default function ComodosScreen() {
         />
       )}
     </View>
-  );
-}
-
-function ItemRow({ item, onEdit, onDelete, onStatusChange }: {
-  item: FirestoreItem;
-  onEdit: () => void;
-  onDelete: () => void;
-  onStatusChange: (s: ItemStatus) => void;
-}) {
-  const status = STATUS_CONFIG[item.status];
-  const priority = PRIORITY_CONFIG[item.priority];
-  const nextStatus = STATUS_ORDER[(STATUS_ORDER.indexOf(item.status) + 1) % STATUS_ORDER.length];
-  const isInstalled = item.status === 'instalado';
-
-  return (
-    <View style={ir.row}>
-      <TouchableOpacity
-        style={[ir.checkbox, { borderColor: status.dot, backgroundColor: (item.status === 'comprado' || isInstalled) ? status.dot : 'transparent' }]}
-        onPress={() => onStatusChange(nextStatus)}
-      >
-        {(item.status === 'comprado' || isInstalled) && <Text style={{ color: '#fff', fontSize: 11 }}>✓</Text>}
-      </TouchableOpacity>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[ir.name, isInstalled && { textDecorationLine: 'line-through', color: '#9E9894' }]} numberOfLines={1}>
-          {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ''}
-        </Text>
-        <Text style={ir.meta} numberOfLines={1}>
-          {CATEGORIES[item.category].label}{item.store ? ` · ${item.store}` : ''}
-        </Text>
-        {item.notes ? <Text style={ir.notes} numberOfLines={1}>{item.notes}</Text> : null}
-        {item.productUrl ? (
-          <TouchableOpacity onPress={() => Linking.openURL(item.productUrl!).catch(() => {})}>
-            <Text style={ir.link}>🔗 Ver produto</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-      <View style={{ alignItems: 'flex-end', gap: 4 }}>
-        <View style={[ir.statusBadge, { backgroundColor: status.bg }]}>
-          <Text style={[ir.statusText, { color: status.color }]}>{status.label}</Text>
-        </View>
-        {item.estimatedPrice > 0 && (
-          <Text style={ir.price}>{item.estimatedPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })}</Text>
-        )}
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-          <TouchableOpacity onPress={onEdit}><Text style={{ color: '#B5602A', fontSize: 14 }}>✎</Text></TouchableOpacity>
-          <TouchableOpacity onPress={onDelete}><Text style={{ color: '#DC2626', fontSize: 14 }}>🗑</Text></TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function ItemFormModal({ room, rooms, propertyId, userId, item, onSave, onDelete, onClose }: {
-  room: FirestoreRoom;
-  rooms: FirestoreRoom[];
-  propertyId: string;
-  userId: string;
-  item?: FirestoreItem;
-  onSave: (data: any) => Promise<void>;
-  onDelete?: () => Promise<void>;
-  onClose: () => void;
-}) {
-  const [name, setName] = useState(item?.name ?? '');
-  const [roomId, setRoomId] = useState(item?.roomId ?? room.id);
-  const [category, setCategory] = useState(item?.category ?? 'moveis');
-  const [status, setStatus] = useState(item?.status ?? 'quero_comprar');
-  const [priority, setPriority] = useState(item?.priority ?? 'media');
-  const [estimatedPrice, setEstimatedPrice] = useState(String(item?.estimatedPrice ?? ''));
-  const [paidPrice, setPaidPrice] = useState(String(item?.paidPrice ?? ''));
-  const [store, setStore] = useState(item?.store ?? '');
-  const [notes, setNotes] = useState(item?.notes ?? '');
-  const [quantity, setQuantity] = useState(String(item?.quantity ?? 1));
-  const [productUrl, setProductUrl] = useState(item?.productUrl ?? '');
-  const [priceLinks, setPriceLinks] = useState<PriceLink[]>(item?.priceLinks ?? []);
-  const [newLinkUrl, setNewLinkUrl] = useState('');
-  const [newLinkPrice, setNewLinkPrice] = useState('');
-  const [newLinkLabel, setNewLinkLabel] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const addPriceLink = () => {
-    const price = parseFloat(newLinkPrice.replace(',', '.'));
-    if (!newLinkUrl.trim() || isNaN(price)) return;
-    const label = newLinkLabel.trim() || (() => {
-      try { return new URL(newLinkUrl.startsWith('http') ? newLinkUrl : `https://${newLinkUrl}`).hostname.replace(/^www\./, ''); }
-      catch { return newLinkUrl; }
-    })();
-    setPriceLinks(prev => [...prev, { url: newLinkUrl.trim(), price, label }]);
-    const avg = [...priceLinks, { url: newLinkUrl.trim(), price, label }].reduce((s, l) => s + l.price, 0) / (priceLinks.length + 1);
-    setEstimatedPrice(String(Math.round(avg)));
-    setNewLinkUrl(''); setNewLinkPrice(''); setNewLinkLabel('');
-  };
-
-  const handleSave = async () => {
-    if (!name.trim()) { Alert.alert('Atenção', 'O nome é obrigatório.'); return; }
-    setSaving(true);
-    await onSave({
-      roomId, propertyId, userId,
-      name: name.trim(),
-      description: '',
-      category,
-      status,
-      priority,
-      estimatedPrice: parseFloat(estimatedPrice) || 0,
-      paidPrice: paidPrice ? parseFloat(paidPrice) : null,
-      quantity: parseInt(quantity) || 1,
-      store: store.trim() || null,
-      productUrl: productUrl.trim() || null,
-      priceLinks,
-      images: item?.images ?? [],
-      notes: notes.trim(),
-    });
-    setSaving(false);
-  };
-
-  const CATS = Object.entries(CATEGORIES) as [string, { label: string; color: string }][];
-  const STATUSES = Object.entries(STATUS_CONFIG) as [string, { label: string; color: string; bg: string; dot: string }][];
-  const PRIOS = Object.entries(PRIORITY_CONFIG) as [string, { label: string; color: string }][];
-
-  return (
-    <Modal visible transparent animationType="slide">
-      <View style={s.modalBackdrop}>
-        <View style={[s.modal, { maxHeight: '90%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={s.modalTitle}>{item ? 'Editar item' : 'Novo item'}</Text>
-
-            <Text style={s.label}>Nome *</Text>
-            <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Ex: Sofá, Geladeira..." placeholderTextColor="#9E9894" />
-
-            <Text style={s.label}>Cômodo</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-              {rooms.map(r => (
-                <TouchableOpacity
-                  key={r.id}
-                  style={[s.chipBtn, roomId === r.id && { borderColor: r.color, backgroundColor: r.color + '15' }]}
-                  onPress={() => setRoomId(r.id)}
-                >
-                  <Text style={{ fontSize: 14 }}>{r.icon}</Text>
-                  <Text style={[s.chipText, roomId === r.id && { color: r.color, fontWeight: '600' }]}>{r.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Text style={s.label}>Categoria</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-              {CATS.map(([key, val]) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[s.chipBtn, category === key && { borderColor: val.color, backgroundColor: val.color + '15' }]}
-                  onPress={() => setCategory(key as any)}
-                >
-                  <Text style={[s.chipText, category === key && { color: val.color, fontWeight: '600' }]}>{val.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Text style={s.label}>Status</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-              {STATUSES.map(([key, val]) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[s.chipBtn, status === key && { borderColor: val.dot, backgroundColor: val.bg }]}
-                  onPress={() => setStatus(key as any)}
-                >
-                  <Text style={[s.chipText, status === key && { color: val.color, fontWeight: '600' }]}>{val.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={s.label}>Prioridade</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-              {PRIOS.map(([key, val]) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[s.chipBtn, priority === key && { borderColor: val.color, backgroundColor: val.color + '15' }]}
-                  onPress={() => setPriority(key as any)}
-                >
-                  <Text style={[s.chipText, priority === key && { color: val.color, fontWeight: '600' }]}>{val.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.label}>Preço estimado</Text>
-                <TextInput style={s.input} value={estimatedPrice} onChangeText={setEstimatedPrice} placeholder="0" placeholderTextColor="#9E9894" keyboardType="numeric" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.label}>Preço pago</Text>
-                <TextInput style={s.input} value={paidPrice} onChangeText={setPaidPrice} placeholder="0" placeholderTextColor="#9E9894" keyboardType="numeric" />
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.label}>Quantidade</Text>
-                <TextInput style={s.input} value={quantity} onChangeText={setQuantity} placeholder="1" placeholderTextColor="#9E9894" keyboardType="numeric" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.label}>Loja</Text>
-                <TextInput style={s.input} value={store} onChangeText={setStore} placeholder="Ex: Tok&Stok" placeholderTextColor="#9E9894" />
-              </View>
-            </View>
-
-            <Text style={s.label}>Observações</Text>
-            <TextInput
-              style={[s.input, { height: 70, textAlignVertical: 'top', paddingTop: 10 }]}
-              value={notes} onChangeText={setNotes}
-              placeholder="Detalhes adicionais..."
-              placeholderTextColor="#9E9894" multiline
-            />
-
-            <Text style={s.label}>URL do produto</Text>
-            <TextInput
-              style={s.input} value={productUrl} onChangeText={setProductUrl}
-              placeholder="https://..." placeholderTextColor="#9E9894"
-              autoCapitalize="none" keyboardType="url"
-            />
-
-            <Text style={s.label}>Links de preço</Text>
-            {priceLinks.map((l, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <View style={{ flex: 1, backgroundColor: '#F7F5F2', borderRadius: 8, padding: 8, borderWidth: 1, borderColor: '#E4E0DB' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#1A1714' }}>{l.label}</Text>
-                  <Text style={{ fontSize: 11, color: '#9E9894' }} numberOfLines={1}>{l.url}</Text>
-                  <Text style={{ fontSize: 12, color: '#5B8A72', fontWeight: '600', marginTop: 2 }}>
-                    {l.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setPriceLinks(prev => prev.filter((_, idx) => idx !== i))}>
-                  <Text style={{ color: '#DC2626', fontSize: 18 }}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-            <View style={{ backgroundColor: '#F7F5F2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E4E0DB', marginBottom: 4 }}>
-              <Text style={{ fontSize: 11, color: '#9E9894', marginBottom: 8, fontWeight: '600' }}>ADICIONAR LINK</Text>
-              <TextInput
-                style={[s.input, { marginBottom: 6 }]} value={newLinkUrl} onChangeText={setNewLinkUrl}
-                placeholder="URL da loja" placeholderTextColor="#9E9894"
-                autoCapitalize="none" keyboardType="url"
-              />
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TextInput
-                  style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkLabel} onChangeText={setNewLinkLabel}
-                  placeholder="Loja (opcional)" placeholderTextColor="#9E9894"
-                />
-                <TextInput
-                  style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkPrice} onChangeText={setNewLinkPrice}
-                  placeholder="Preço" placeholderTextColor="#9E9894" keyboardType="numeric"
-                />
-              </View>
-              <TouchableOpacity
-                style={[s.btn, { marginTop: 8, paddingVertical: 10, backgroundColor: newLinkUrl.trim() && newLinkPrice ? '#B5602A' : '#E4E0DB' }]}
-                onPress={addPriceLink} disabled={!newLinkUrl.trim() || !newLinkPrice}
-              >
-                <Text style={[s.btnText, { fontSize: 13 }]}>+ Adicionar link</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: '#F0EDE9' }]} onPress={onClose}>
-                <Text style={[s.btnText, { color: '#1A1714' }]}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.btn, { flex: 1 }]} onPress={handleSave} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{item ? 'Salvar' : 'Adicionar'}</Text>}
-              </TouchableOpacity>
-            </View>
-            {onDelete && (
-              <TouchableOpacity style={[s.btn, { marginTop: 8, backgroundColor: '#FEE2E2' }]} onPress={() => {
-                Alert.alert('Excluir item', 'Tem certeza?', [
-                  { text: 'Cancelar', style: 'cancel' },
-                  { text: 'Excluir', style: 'destructive', onPress: onDelete },
-                ]);
-              }}>
-                <Text style={[s.btnText, { color: '#DC2626' }]}>Excluir item</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
   );
 }
 
@@ -550,39 +272,15 @@ const s = StyleSheet.create({
   roomActionBtnText: { fontSize: 13, color: '#fff', fontWeight: '500' },
   roomActionBtnDanger: { borderWidth: 1, borderColor: '#FECACA', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#FFF5F5' },
   roomActionBtnDangerText: { fontSize: 13, color: '#DC2626', fontWeight: '500' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1714', marginBottom: 16 },
-  label: { fontSize: 12, fontWeight: '600', color: '#6B6460', marginBottom: 6, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: {
-    backgroundColor: '#F7F5F2', borderWidth: 1.5, borderColor: '#E4E0DB',
-    borderRadius: 10, padding: 12, fontSize: 14, color: '#1A1714', marginBottom: 4,
-  },
   roomTypeBtn: {
     borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 8, marginRight: 8,
     alignItems: 'center', backgroundColor: '#F7F5F2',
   },
   roomTypeName: { fontSize: 11, color: '#6B6460', marginTop: 2 },
-  chipBtn: {
-    borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 5, marginRight: 6,
-    flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F7F5F2',
-  },
-  chipText: { fontSize: 12, color: '#6B6460' },
-});
-
-const ir = StyleSheet.create({
-  row: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F0EDE9',
-  },
-  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, justifyContent: 'center', alignItems: 'center', marginTop: 2, flexShrink: 0 },
-  name: { fontSize: 14, fontWeight: '500', color: '#1A1714' },
-  meta: { fontSize: 11, color: '#9E9894', marginTop: 2 },
-  notes: { fontSize: 11, color: '#6B6460', marginTop: 2, fontStyle: 'italic' },
-  link: { fontSize: 11, color: '#B5602A', marginTop: 3, textDecorationLine: 'underline' },
-  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
-  statusText: { fontSize: 11, fontWeight: '500' },
-  price: { fontSize: 13, fontWeight: '700', color: '#1A1714' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modal: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1714', marginBottom: 16 },
+  label: { fontSize: 12, fontWeight: '600', color: '#6B6460', marginBottom: 6, marginTop: 10, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+  input: { backgroundColor: '#F7F5F2', borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 10, padding: 12, fontSize: 14, color: '#1A1714', marginBottom: 4 },
 });

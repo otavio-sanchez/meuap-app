@@ -1,7 +1,7 @@
 import {
   collection, doc, addDoc, updateDoc, deleteDoc,
-  getDoc, getDocs, query, where, orderBy,
-  serverTimestamp, onSnapshot, type QueryConstraint, type DocumentData,
+  getDoc, getDocs, query, where, orderBy, limit, startAfter,
+  serverTimestamp, onSnapshot, type QueryDocumentSnapshot, type QueryConstraint, type DocumentData,
 } from 'firebase/firestore';
 import { db } from './config';
 import { Property, FirestoreRoom, FirestoreItem, MoveTask, MoveTaskCategory, DEFAULT_MOVE_TASKS } from '@/lib/types';
@@ -27,6 +27,8 @@ export async function deleteDocById(col: string, id: string) {
 
 // ── Properties ───────────────────────────────────────────────────────────────
 
+const PROPERTIES_PAGE_SIZE = 10;
+
 export function watchProperties(userId: string, callback: (data: Property[]) => void) {
   const q = query(
     collection(db, 'properties'),
@@ -36,6 +38,26 @@ export function watchProperties(userId: string, callback: (data: Property[]) => 
   return onSnapshot(q, snap =>
     callback(snap.docs.map(d => ({ id: d.id, ...d.data() }) as Property))
   );
+}
+
+export async function fetchPropertiesPage(
+  userId: string,
+  cursor: QueryDocumentSnapshot | null,
+): Promise<{ items: Property[]; lastDoc: QueryDocumentSnapshot | null; hasMore: boolean }> {
+  const constraints: QueryConstraint[] = [
+    where('memberUids', 'array-contains', userId),
+    orderBy('createdAt', 'desc'),
+    limit(PROPERTIES_PAGE_SIZE + 1),
+  ];
+  if (cursor) constraints.push(startAfter(cursor));
+  const snap = await getDocs(query(collection(db, 'properties'), ...constraints));
+  const hasMore = snap.docs.length > PROPERTIES_PAGE_SIZE;
+  const docs = hasMore ? snap.docs.slice(0, PROPERTIES_PAGE_SIZE) : snap.docs;
+  return {
+    items: docs.map(d => ({ id: d.id, ...d.data() }) as Property),
+    lastDoc: docs[docs.length - 1] ?? null,
+    hasMore,
+  };
 }
 
 export function watchProperty(propertyId: string, callback: (p: Property | null) => void) {
@@ -137,4 +159,51 @@ export async function seedDefaultTasks(propertyId: string, userId: string) {
       createTask({ propertyId, userId, text: t.text, category: t.category as MoveTaskCategory, done: false })
     )
   );
+}
+
+// ── Public / Invite helpers ───────────────────────────────────────────────────
+
+export async function getPropertyById(propertyId: string): Promise<Property | null> {
+  const snap = await getDoc(doc(db, 'properties', propertyId));
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as Property) : null;
+}
+
+export async function getRoomsForProperty(propertyId: string): Promise<FirestoreRoom[]> {
+  const q = query(
+    collection(db, 'rooms'),
+    where('propertyId', '==', propertyId),
+    orderBy('order', 'asc'),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as FirestoreRoom);
+}
+
+export async function getItemsForProperty(propertyId: string): Promise<FirestoreItem[]> {
+  const q = query(
+    collection(db, 'items'),
+    where('propertyId', '==', propertyId),
+    orderBy('createdAt', 'asc'),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as FirestoreItem);
+}
+
+export async function joinProperty(
+  propertyId: string,
+  user: { uid: string; email: string | null; displayName: string | null },
+): Promise<void> {
+  const property = await getPropertyById(propertyId);
+  if (!property) throw new Error('Imóvel não encontrado.');
+  if (!property.inviteEnabled) throw new Error('O link de convite está desativado.');
+  if ((property.memberUids ?? []).includes(user.uid)) return; // already a member
+  const newMember: import('@/lib/types').PropertyMember = {
+    uid: user.uid,
+    email: user.email ?? '',
+    displayName: user.displayName,
+    role: 'editor',
+  };
+  await updateDocById('properties', propertyId, {
+    memberUids: [...(property.memberUids ?? []), user.uid],
+    members: [...(property.members ?? []), newMember],
+  });
 }

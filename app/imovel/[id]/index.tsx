@@ -386,6 +386,7 @@ export default function ImovelScreen() {
             { label: '🛋️ Cômodos', path: `/imovel/${id}/comodos` },
             { label: '💰 Orçamento', path: `/imovel/${id}/orcamento` },
             { label: '🚛 Mudança', path: `/imovel/${id}/mudanca` },
+            { label: '🏗️ Planta', path: `/imovel/${id}/planta` },
           ].map(nav => (
             <TouchableOpacity key={nav.path} style={s.navBtn} onPress={() => router.push(nav.path)}>
               <Text style={s.navBtnText}>{nav.label}</Text>

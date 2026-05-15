@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Modal, TextInput, Linking,
+  ActivityIndicator, Alert, TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -10,9 +10,12 @@ import {
   createItem, updateItem, deleteItem, deleteRoom, updateRoom,
 } from '@/lib/firebase/firestore';
 import {
-  Property, FirestoreRoom, FirestoreItem, PriceLink, ItemStatus, ItemPriority, ItemCategory,
+  Property, FirestoreRoom, FirestoreItem, ItemStatus, ItemPriority, ItemCategory,
   STATUS_CONFIG, STATUS_ORDER, PRIORITY_CONFIG, CATEGORIES, ROOM_SUGGESTIONS as RS,
 } from '@/lib/types';
+// ItemRow and ItemFormModal imported from components
+import { ItemRow } from '@/components/ItemRow';
+import { ItemFormModal } from '@/components/ItemFormModal';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 });
@@ -349,264 +352,6 @@ export default function ComodoScreen() {
   );
 }
 
-function ItemRow({ item, onEdit, onDelete, onStatusChange }: {
-  item: FirestoreItem; onEdit: () => void; onDelete: () => void;
-  onStatusChange: (s: ItemStatus) => void;
-}) {
-  const status = STATUS_CONFIG[item.status];
-  const priority = PRIORITY_CONFIG[item.priority];
-  const nextStatus = STATUS_ORDER[(STATUS_ORDER.indexOf(item.status) + 1) % STATUS_ORDER.length];
-  const isInstalled = item.status === 'instalado';
-  const bestPriceLink = item.priceLinks?.length > 0
-    ? item.priceLinks.reduce((best, pl) => pl.price < best.price ? pl : best)
-    : null;
-
-  return (
-    <View style={ir.row}>
-      <TouchableOpacity
-        style={[ir.checkbox, { borderColor: status.dot, backgroundColor: (item.status === 'comprado' || isInstalled) ? status.dot : 'transparent' }]}
-        onPress={() => onStatusChange(nextStatus)}
-      >
-        {(item.status === 'comprado' || isInstalled) && <Text style={{ color: '#fff', fontSize: 10 }}>✓</Text>}
-      </TouchableOpacity>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[ir.name, isInstalled && { textDecorationLine: 'line-through', color: '#9E9894' }]} numberOfLines={1}>
-          {item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ''}
-        </Text>
-        <Text style={ir.meta} numberOfLines={1}>
-          {CATEGORIES[item.category].label}{item.store ? ` · ${item.store}` : ''}
-        </Text>
-        {item.notes ? <Text style={ir.notes} numberOfLines={1}>{item.notes}</Text> : null}
-
-        {/* Price links */}
-        {item.priceLinks?.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-            {item.priceLinks.map((pl, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={[ir.priceLink, bestPriceLink === pl && ir.priceLinkBest]}
-                onPress={() => Linking.openURL(pl.url).catch(() => {})}
-              >
-                {bestPriceLink === pl && <Text style={ir.priceLinkBestTag}>↓</Text>}
-                <Text style={[ir.priceLinkText, bestPriceLink === pl && { color: '#166534' }]}>
-                  {pl.label || `Opção ${idx + 1}`} · {fmt(pl.price)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-
-        {/* Product URL (when no price links) */}
-        {(!item.priceLinks || item.priceLinks.length === 0) && item.productUrl && (
-          <TouchableOpacity onPress={() => Linking.openURL(item.productUrl!).catch(() => {})} style={{ marginTop: 4 }}>
-            <Text style={{ fontSize: 11, color: '#B5602A', textDecorationLine: 'underline' }}>🔗 Ver produto</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      <View style={{ alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
-        <View style={[ir.badge, { backgroundColor: status.bg }]}>
-          <Text style={[ir.badgeText, { color: status.color }]}>{status.label}</Text>
-        </View>
-        <View style={[ir.priorityBadge, { backgroundColor: priority.color + '15' }]}>
-          <Text style={[ir.priorityText, { color: priority.color }]}>{priority.label}</Text>
-        </View>
-        {item.estimatedPrice > 0 && <Text style={ir.price}>{fmt(item.estimatedPrice)}</Text>}
-        {item.paidPrice != null && <Text style={{ fontSize: 10, color: '#5B8A72' }}>pago: {fmt(item.paidPrice)}</Text>}
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity onPress={onEdit}><Text style={{ color: '#B5602A', fontSize: 14 }}>✎</Text></TouchableOpacity>
-          <TouchableOpacity onPress={onDelete}><Text style={{ color: '#DC2626', fontSize: 14 }}>🗑</Text></TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function ItemFormModal({ rooms, defaultRoomId, propertyId, userId, item, onSave, onDelete, onClose }: {
-  rooms: FirestoreRoom[]; defaultRoomId: string; propertyId: string; userId: string;
-  item?: FirestoreItem; onSave: (data: any) => Promise<void>;
-  onDelete?: () => Promise<void>; onClose: () => void;
-}) {
-  const [name, setName] = useState(item?.name ?? '');
-  const [roomId, setRoomId] = useState(item?.roomId ?? defaultRoomId);
-  const [category, setCategory] = useState<ItemCategory>(item?.category ?? 'moveis');
-  const [status, setStatus] = useState<ItemStatus>(item?.status ?? 'quero_comprar');
-  const [priority, setPriority] = useState<ItemPriority>(item?.priority ?? 'media');
-  const [estimatedPrice, setEstimatedPrice] = useState(String(item?.estimatedPrice ?? ''));
-  const [paidPrice, setPaidPrice] = useState(String(item?.paidPrice ?? ''));
-  const [store, setStore] = useState(item?.store ?? '');
-  const [productUrl, setProductUrl] = useState(item?.productUrl ?? '');
-  const [priceLinks, setPriceLinks] = useState<PriceLink[]>(item?.priceLinks ?? []);
-  const [newLinkUrl, setNewLinkUrl] = useState('');
-  const [newLinkPrice, setNewLinkPrice] = useState('');
-  const [newLinkLabel, setNewLinkLabel] = useState('');
-  const [notes, setNotes] = useState(item?.notes ?? '');
-  const [quantity, setQuantity] = useState(String(item?.quantity ?? 1));
-  const [saving, setSaving] = useState(false);
-
-  const addPriceLink = () => {
-    const price = parseFloat(newLinkPrice.replace(',', '.'));
-    if (!newLinkUrl.trim() || isNaN(price)) return;
-    const label = newLinkLabel.trim() || (() => {
-      try { return new URL(newLinkUrl.startsWith('http') ? newLinkUrl : `https://${newLinkUrl}`).hostname.replace(/^www\./, ''); }
-      catch { return newLinkUrl; }
-    })();
-    const updated = [...priceLinks, { url: newLinkUrl.trim(), price, label }];
-    setPriceLinks(updated);
-    setEstimatedPrice(String(Math.round(updated.reduce((s, l) => s + l.price, 0) / updated.length)));
-    setNewLinkUrl(''); setNewLinkPrice(''); setNewLinkLabel('');
-  };
-
-  const handleSave = async () => {
-    if (!name.trim()) { Alert.alert('Atenção', 'O nome é obrigatório.'); return; }
-    setSaving(true);
-    await onSave({
-      roomId, propertyId, userId, name: name.trim(), description: '',
-      category, status, priority,
-      estimatedPrice: parseFloat(estimatedPrice) || 0,
-      paidPrice: paidPrice ? parseFloat(paidPrice) : null,
-      quantity: parseInt(quantity) || 1,
-      store: store.trim() || null,
-      productUrl: productUrl.trim() || null,
-      priceLinks,
-      images: item?.images ?? [],
-      notes: notes.trim(),
-    });
-    setSaving(false);
-  };
-
-  return (
-    <Modal visible transparent animationType="slide">
-      <View style={s.modalBackdrop}>
-        <View style={[s.modal, { maxHeight: '92%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <Text style={s.modalTitle}>{item ? 'Editar item' : 'Novo item'}</Text>
-
-            <Text style={s.fieldLabel}>Nome *</Text>
-            <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Ex: Sofá..." placeholderTextColor="#9E9894" autoFocus />
-
-            <Text style={s.fieldLabel}>Cômodo</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-              {rooms.map(r => (
-                <TouchableOpacity key={r.id} style={[s.chip, roomId === r.id && { borderColor: r.color, backgroundColor: r.color + '15' }]} onPress={() => setRoomId(r.id)}>
-                  <Text style={{ fontSize: 14 }}>{r.icon}</Text>
-                  <Text style={[s.chipText, roomId === r.id && { color: r.color, fontWeight: '600' }]}>{r.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Text style={s.fieldLabel}>Categoria</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-              {(Object.entries(CATEGORIES) as [ItemCategory, any][]).map(([key, val]) => (
-                <TouchableOpacity key={key} style={[s.chip, category === key && { borderColor: val.color, backgroundColor: val.color + '15' }]} onPress={() => setCategory(key)}>
-                  <Text style={[s.chipText, category === key && { color: val.color, fontWeight: '600' }]}>{val.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Text style={s.fieldLabel}>Status</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-              {STATUS_ORDER.map(st => {
-                const cfg = STATUS_CONFIG[st];
-                return (
-                  <TouchableOpacity key={st} style={[s.chip, status === st && { borderColor: cfg.dot, backgroundColor: cfg.bg }]} onPress={() => setStatus(st)}>
-                    <Text style={[s.chipText, status === st && { color: cfg.color, fontWeight: '600' }]}>{cfg.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <Text style={s.fieldLabel}>Prioridade</Text>
-            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 8 }}>
-              {(Object.entries(PRIORITY_CONFIG) as [ItemPriority, any][]).map(([key, val]) => (
-                <TouchableOpacity key={key} style={[s.chip, priority === key && { borderColor: val.color, backgroundColor: val.color + '15' }]} onPress={() => setPriority(key)}>
-                  <Text style={[s.chipText, priority === key && { color: val.color, fontWeight: '600' }]}>{val.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.fieldLabel}>Estimado (R$)</Text>
-                <TextInput style={s.input} value={estimatedPrice} onChangeText={setEstimatedPrice} keyboardType="numeric" placeholder="0" placeholderTextColor="#9E9894" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.fieldLabel}>Pago (R$)</Text>
-                <TextInput style={s.input} value={paidPrice} onChangeText={setPaidPrice} keyboardType="numeric" placeholder="0" placeholderTextColor="#9E9894" />
-              </View>
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.fieldLabel}>Qtd</Text>
-                <TextInput style={s.input} value={quantity} onChangeText={setQuantity} keyboardType="numeric" placeholder="1" placeholderTextColor="#9E9894" />
-              </View>
-              <View style={{ flex: 2 }}>
-                <Text style={s.fieldLabel}>Loja</Text>
-                <TextInput style={s.input} value={store} onChangeText={setStore} placeholder="Ex: Tok&Stok" placeholderTextColor="#9E9894" />
-              </View>
-            </View>
-
-            <Text style={s.fieldLabel}>Link do produto</Text>
-            <TextInput style={s.input} value={productUrl} onChangeText={setProductUrl} placeholder="https://..." placeholderTextColor="#9E9894" autoCapitalize="none" keyboardType="url" />
-
-            <Text style={s.fieldLabel}>Links de preço</Text>
-            {priceLinks.map((l, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <View style={{ flex: 1, backgroundColor: '#F7F5F2', borderRadius: 8, padding: 8, borderWidth: 1, borderColor: '#E4E0DB' }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#1A1714' }}>{l.label}</Text>
-                  <Text style={{ fontSize: 11, color: '#9E9894' }} numberOfLines={1}>{l.url}</Text>
-                  <Text style={{ fontSize: 12, color: '#5B8A72', fontWeight: '600', marginTop: 2 }}>
-                    {l.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 })}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setPriceLinks(prev => prev.filter((_, idx) => idx !== i))}>
-                  <Text style={{ color: '#DC2626', fontSize: 18 }}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-            <View style={{ backgroundColor: '#F7F5F2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E4E0DB', marginBottom: 4 }}>
-              <Text style={{ fontSize: 11, color: '#9E9894', marginBottom: 8, fontWeight: '600' }}>ADICIONAR LINK</Text>
-              <TextInput style={[s.input, { marginBottom: 6 }]} value={newLinkUrl} onChangeText={setNewLinkUrl} placeholder="URL da loja" placeholderTextColor="#9E9894" autoCapitalize="none" keyboardType="url" />
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TextInput style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkLabel} onChangeText={setNewLinkLabel} placeholder="Loja (opcional)" placeholderTextColor="#9E9894" />
-                <TextInput style={[s.input, { flex: 1, marginBottom: 0 }]} value={newLinkPrice} onChangeText={setNewLinkPrice} placeholder="Preço" placeholderTextColor="#9E9894" keyboardType="numeric" />
-              </View>
-              <TouchableOpacity
-                style={[s.btn, { marginTop: 8, paddingVertical: 10, backgroundColor: newLinkUrl.trim() && newLinkPrice ? '#B5602A' : '#E4E0DB' }]}
-                onPress={addPriceLink} disabled={!newLinkUrl.trim() || !newLinkPrice}
-              >
-                <Text style={[s.btnText, { fontSize: 13 }]}>+ Adicionar link</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={s.fieldLabel}>Observações</Text>
-            <TextInput style={[s.input, { height: 60, textAlignVertical: 'top', paddingTop: 10 }]} value={notes} onChangeText={setNotes} multiline placeholder="Detalhes adicionais..." placeholderTextColor="#9E9894" />
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: '#F0EDE9' }]} onPress={onClose}>
-                <Text style={[s.btnText, { color: '#1A1714' }]}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.btn, { flex: 1 }]} onPress={handleSave} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{item ? 'Salvar' : 'Adicionar'}</Text>}
-              </TouchableOpacity>
-            </View>
-            {onDelete && (
-              <TouchableOpacity style={[s.btn, { marginTop: 8, backgroundColor: '#FEE2E2' }]} onPress={() => {
-                Alert.alert('Excluir item', 'Tem certeza?', [
-                  { text: 'Cancelar', style: 'cancel' },
-                  { text: 'Excluir', style: 'destructive', onPress: onDelete },
-                ]);
-              }}>
-                <Text style={[s.btnText, { color: '#DC2626' }]}>Excluir item</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 const s = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F7F5F2' },
   grayText: { fontSize: 14, color: '#9E9894' },
@@ -641,27 +386,5 @@ const s = StyleSheet.create({
   btnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   deleteBtn: { borderWidth: 1.5, borderColor: '#FECACA', borderRadius: 12, padding: 14, alignItems: 'center', backgroundColor: '#FFF5F5' },
   deleteBtnText: { fontSize: 14, fontWeight: '600', color: '#DC2626' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1714', marginBottom: 14 },
   input: { backgroundColor: '#F7F5F2', borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 10, padding: 12, fontSize: 14, color: '#1A1714', marginBottom: 4 },
-  chip: { borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 6, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F7F5F2' },
-  chipText: { fontSize: 12, color: '#6B6460' },
-});
-
-const ir = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F0EDE9' },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, justifyContent: 'center', alignItems: 'center', flexShrink: 0, marginTop: 1 },
-  name: { fontSize: 14, fontWeight: '500', color: '#1A1714' },
-  meta: { fontSize: 11, color: '#9E9894', marginTop: 2 },
-  notes: { fontSize: 11, color: '#6B6460', marginTop: 2, fontStyle: 'italic' },
-  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
-  badgeText: { fontSize: 10, fontWeight: '500' },
-  priorityBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
-  priorityText: { fontSize: 10, fontWeight: '600' },
-  price: { fontSize: 13, fontWeight: '700', color: '#1A1714' },
-  priceLink: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderColor: '#E4E0DB', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6, backgroundColor: '#F7F5F2' },
-  priceLinkBest: { borderColor: '#5B8A72', backgroundColor: '#DCFCE7' },
-  priceLinkBestTag: { fontSize: 10, color: '#166534', fontWeight: '700' },
-  priceLinkText: { fontSize: 11, color: '#6B6460' },
 });

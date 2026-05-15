@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { createUserWithEmailAndPassword, updateProfile, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '@/lib/firebase/config';
 import * as Google from 'expo-auth-session/providers/google';
@@ -14,6 +14,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 export default function CadastroScreen() {
   const router = useRouter();
+  const { redirect } = useLocalSearchParams<{ redirect?: string }>();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,7 +34,7 @@ export default function CadastroScreen() {
       setGoogleLoading(true);
       const credential = GoogleAuthProvider.credential(id_token);
       signInWithCredential(auth, credential)
-        .then(() => router.replace('/(app)'))
+        .then(() => router.replace((redirect as any) ?? '/(app)'))
         .catch(err => {
           setError('Não foi possível entrar com Google. Tente novamente.');
           console.error(err);
@@ -54,7 +55,7 @@ export default function CadastroScreen() {
     try {
       const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
       await updateProfile(user, { displayName: name.trim() });
-      router.replace('/(app)');
+      router.replace((redirect as any) ?? '/(app)');
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
       if (code === 'auth/email-already-in-use') setError('Esse e-mail já está cadastrado. Faça login.');

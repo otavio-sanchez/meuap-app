@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '@/lib/firebase/config';
 import * as Google from 'expo-auth-session/providers/google';
@@ -31,6 +31,7 @@ function getErrorMessage(code?: string): string {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { redirect } = useLocalSearchParams<{ redirect?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -51,7 +52,7 @@ export default function LoginScreen() {
       setGoogleLoading(true);
       const credential = GoogleAuthProvider.credential(id_token);
       signInWithCredential(auth, credential)
-        .then(() => router.replace('/(app)'))
+        .then(() => router.replace((redirect as any) ?? '/(app)'))
         .catch(err => {
           setError('Não foi possível entrar com Google. Tente novamente.');
           console.error(err);
@@ -68,7 +69,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
-      router.replace('/(app)');
+      router.replace((redirect as any) ?? '/(app)');
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
       setError(getErrorMessage(code));

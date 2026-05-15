@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator, useWindowDimensions, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
-import { watchProperties, deleteProperty } from '@/lib/firebase/firestore';
+import { fetchPropertiesPage, deleteProperty } from '@/lib/firebase/firestore';
 import { Property, PROPERTY_TYPES } from '@/lib/types';
+import { type QueryDocumentSnapshot } from 'firebase/firestore';
+import { OfflineBanner } from '@/components/OfflineBanner';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 });
@@ -29,17 +31,40 @@ export default function ImoveisScreen() {
   const { width } = useWindowDimensions();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const cursorRef = useRef<QueryDocumentSnapshot | null>(null);
 
   const numColumns = width >= 600 ? 2 : 1;
   const pad = width >= 600 ? 20 : 16;
 
-  useEffect(() => {
+  const loadFirst = useCallback(async () => {
     if (!user) return;
-    return watchProperties(user.uid, data => {
-      setProperties(data);
+    setLoading(true);
+    try {
+      const { items, lastDoc, hasMore: more } = await fetchPropertiesPage(user.uid, null);
+      setProperties(items);
+      cursorRef.current = lastDoc;
+      setHasMore(more);
+    } finally {
       setLoading(false);
-    });
+    }
   }, [user]);
+
+  const loadMore = async () => {
+    if (!user || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, lastDoc, hasMore: more } = await fetchPropertiesPage(user.uid, cursorRef.current);
+      setProperties(prev => [...prev, ...items]);
+      cursorRef.current = lastDoc;
+      setHasMore(more);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => { loadFirst(); }, [loadFirst]);
 
   const handleDelete = (p: Property) => {
     Alert.alert(
@@ -47,7 +72,12 @@ export default function ImoveisScreen() {
       `Excluir "${p.name}"? Todos os cômodos e itens serão removidos permanentemente.`,
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Sim, excluir', style: 'destructive', onPress: () => deleteProperty(p.id) },
+        {
+          text: 'Sim, excluir', style: 'destructive', onPress: async () => {
+            await deleteProperty(p.id);
+            setProperties(prev => prev.filter(x => x.id !== p.id));
+          }
+        },
       ]
     );
   };
@@ -56,19 +86,19 @@ export default function ImoveisScreen() {
     return <View style={st.center}><ActivityIndicator color="#B5602A" size="large" /></View>;
   }
 
-  const cardWidth = numColumns === 2
-    ? (width - pad * 2 - 12) / 2
-    : undefined;
+  const cardWidth = numColumns === 2 ? (width - pad * 2 - 12) / 2 : undefined;
 
   return (
     <View style={st.container}>
+      <OfflineBanner />
+
       <View style={st.header}>
         <View style={{ flex: 1 }}>
           <Text style={st.greeting}>{greeting(user?.displayName)}</Text>
           <Text style={st.greetingSub}>
             {properties.length === 0
               ? 'Crie seu primeiro imóvel para começar.'
-              : `Você tem ${properties.length} imóvel${properties.length > 1 ? 'is' : ''} cadastrado${properties.length > 1 ? 's' : ''}.`}
+              : `Você tem ${properties.length}${hasMore ? '+' : ''} imóvel${properties.length !== 1 ? 'is' : ''} cadastrado${properties.length !== 1 ? 's' : ''}.`}
           </Text>
         </View>
         <TouchableOpacity style={st.addBtn} onPress={() => router.push('/novo-imovel')}>
@@ -95,16 +125,26 @@ export default function ImoveisScreen() {
           key={numColumns}
           contentContainerStyle={{ padding: pad, gap: 12, paddingBottom: 40 }}
           columnWrapperStyle={numColumns === 2 ? { gap: 12 } : undefined}
+          onRefresh={loadFirst}
+          refreshing={loading}
+          ListFooterComponent={
+            hasMore ? (
+              <TouchableOpacity style={st.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+                {loadingMore
+                  ? <ActivityIndicator color="#B5602A" size="small" />
+                  : <Text style={st.loadMoreText}>Carregar mais →</Text>
+                }
+              </TouchableOpacity>
+            ) : null
+          }
           renderItem={({ item: p }) => (
             <TouchableOpacity
               style={[st.card, cardWidth ? { width: cardWidth } : null]}
               onPress={() => router.push(`/imovel/${p.id}`)}
               activeOpacity={0.75}
             >
-              {/* Cover area */}
               <View style={st.cover}>
                 <Text style={st.coverIcon}>{TYPE_ICONS[p.type] ?? '🏠'}</Text>
-                {/* Public/private badge */}
                 <View style={[st.publicBadge, p.isPublic && st.publicBadgeOn]}>
                   <Text style={[st.publicBadgeText, p.isPublic && st.publicBadgeTextOn]}>
                     {p.isPublic ? 'Público' : 'Privado'}
@@ -112,7 +152,6 @@ export default function ImoveisScreen() {
                 </View>
               </View>
 
-              {/* Card body */}
               <View style={st.cardBody}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
                   <Text style={st.cardName} numberOfLines={1}>{p.name}</Text>
@@ -128,10 +167,7 @@ export default function ImoveisScreen() {
                 )}
 
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                  <TouchableOpacity
-                    style={st.openBtn}
-                    onPress={() => router.push(`/imovel/${p.id}`)}
-                  >
+                  <TouchableOpacity style={st.openBtn} onPress={() => router.push(`/imovel/${p.id}`)}>
                     <Text style={st.openBtnText}>Abrir →</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -173,16 +209,17 @@ const st = StyleSheet.create({
     shadowColor: '#B5602A', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
   },
   btnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  loadMoreBtn: {
+    marginTop: 4, paddingVertical: 14, alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#E4E0DB', borderRadius: 12, backgroundColor: '#fff',
+  },
+  loadMoreText: { fontSize: 14, color: '#B5602A', fontWeight: '600' },
   card: {
     flex: 1, backgroundColor: '#fff', borderRadius: 16,
     borderWidth: 1, borderColor: '#E4E0DB', overflow: 'hidden',
     shadowColor: '#1A1714', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2,
   },
-  cover: {
-    height: 100, backgroundColor: '#F0EDE9',
-    alignItems: 'center', justifyContent: 'center',
-    position: 'relative',
-  },
+  cover: { height: 100, backgroundColor: '#F0EDE9', alignItems: 'center', justifyContent: 'center', position: 'relative' },
   coverIcon: { fontSize: 40 },
   publicBadge: {
     position: 'absolute', top: 8, right: 8,
@@ -196,15 +233,9 @@ const st = StyleSheet.create({
   cardBody: { padding: 14 },
   cardName: { fontSize: 15, fontWeight: '700', color: '#1A1714', flex: 1 },
   cardMeta: { fontSize: 12, color: '#9E9894', marginBottom: 4 },
-  budgetBadge: {
-    backgroundColor: '#F7F5F2', borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 6, marginTop: 6,
-  },
+  budgetBadge: { backgroundColor: '#F7F5F2', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginTop: 6 },
   budgetText: { fontSize: 12, color: '#6B6460' },
-  openBtn: {
-    flex: 1, backgroundColor: '#B5602A', borderRadius: 8,
-    paddingVertical: 8, alignItems: 'center',
-  },
+  openBtn: { flex: 1, backgroundColor: '#B5602A', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
   openBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   deleteBtn: {
     backgroundColor: '#FFF5F5', borderRadius: 8, borderWidth: 1, borderColor: '#FECACA',
